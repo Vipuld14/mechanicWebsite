@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Book an Appointment — Willy's Mobile Mechanic</title>
+  <link rel="stylesheet" href="../css/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="../js/config.js"></script>
+  <style>
+    .booking-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 40px;
+      max-width: 1000px;
+    }
+    @media (max-width: 768px) {
+      .booking-layout { grid-template-columns: 1fr; }
+    }
+
+    /* Steps indicator */
+    .steps {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      margin-bottom: 48px;
+      max-width: 500px;
+    }
+    .step {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .step-num {
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      border: 2px solid var(--gray-200);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--gray-400);
+      flex-shrink: 0;
+      transition: all 0.3s;
+    }
+    .step.active .step-num {
+      background: var(--red); border-color: var(--red); color: var(--white);
+    }
+    .step.done .step-num {
+      background: var(--green); border-color: var(--green); color: var(--white);
+    }
+    .step-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--gray-400);
+      white-space: nowrap;
+    }
+    .step.active .step-label { color: var(--black); }
+    .step-line {
+      flex: 1;
+      height: 2px;
+      background: var(--gray-200);
+      margin: 0 12px;
+      min-width: 24px;
+    }
+
+    /* Calendar */
+    .calendar-wrap {
+      background: var(--white);
+      border: 1.5px solid var(--gray-200);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .cal-header {
+      background: var(--black);
+      color: var(--white);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+    }
+    .cal-header h3 {
+      font-family: var(--font-display);
+      font-size: 1.3rem;
+      letter-spacing: 0.5px;
+    }
+    .cal-nav {
+      background: none;
+      border: none;
+      color: var(--white);
+      font-size: 1.2rem;
+      cursor: pointer;
+      padding: 4px 10px;
+      border-radius: 4px;
+      transition: background 0.2s;
+    }
+    .cal-nav:hover { background: rgba(255,255,255,0.15); }
+    .cal-grid {
+      padding: 16px;
+    }
+    .cal-days-header {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      text-align: center;
+      margin-bottom: 8px;
+    }
+    .cal-days-header span {
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--gray-400);
+      padding: 4px 0;
+    }
+    .cal-cells {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 3px;
+    }
+    .cal-cell {
+      aspect-ratio: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      border: 1.5px solid transparent;
+      font-weight: 500;
+      transition: all 0.15s;
+      position: relative;
+    }
+    .cal-cell.empty { cursor: default; }
+    .cal-cell.past { color: var(--gray-200); cursor: not-allowed; }
+    .cal-cell.unavailable { color: var(--gray-300); cursor: not-allowed; background: var(--gray-100); }
+    .cal-cell.available:hover { background: var(--gray-100); border-color: var(--gray-400); }
+    .cal-cell.available { color: var(--black); }
+    .cal-cell.selected { background: var(--black) !important; color: var(--white) !important; border-color: var(--black) !important; }
+    .cal-cell.today { border-color: var(--red); }
+    .cal-cell.has-slots::after {
+      content: '';
+      position: absolute;
+      bottom: 3px;
+      width: 4px; height: 4px;
+      background: var(--green);
+      border-radius: 50%;
+    }
+
+    /* Time Slots */
+    .time-slots-wrap {
+      background: var(--white);
+      border: 1.5px solid var(--gray-200);
+      border-radius: var(--radius);
+      padding: 20px;
+      min-height: 200px;
+    }
+    .time-slots-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--gray-600);
+      margin-bottom: 16px;
+    }
+    .time-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .time-btn {
+      padding: 10px 8px;
+      border: 1.5px solid var(--gray-200);
+      border-radius: var(--radius);
+      background: var(--white);
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: all 0.15s;
+      font-weight: 500;
+    }
+    .time-btn:hover { border-color: var(--black); }
+    .time-btn.booked {
+      background: var(--gray-100);
+      color: var(--gray-400);
+      cursor: not-allowed;
+      text-decoration: line-through;
+      border-color: transparent;
+    }
+    .time-btn.selected {
+      background: var(--black);
+      color: var(--white);
+      border-color: var(--black);
+    }
+    .no-date-msg {
+      color: var(--gray-400);
+      font-size: 0.875rem;
+      text-align: center;
+      padding: 32px 0;
+    }
+
+    /* Form panel */
+    .form-panel {
+      background: var(--white);
+      border: 1.5px solid var(--gray-200);
+      border-radius: var(--radius);
+      padding: 28px;
+    }
+    .form-panel-title {
+      font-family: var(--font-display);
+      font-size: 1.6rem;
+      margin-bottom: 4px;
+    }
+    .form-panel-sub {
+      font-size: 0.85rem;
+      color: var(--gray-600);
+      margin-bottom: 24px;
+    }
+    .selected-slot-display {
+      background: var(--black);
+      color: var(--white);
+      padding: 12px 16px;
+      border-radius: var(--radius);
+      font-size: 0.85rem;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .selected-slot-display strong {
+      font-family: var(--font-mono);
+    }
+
+    /* Success screen */
+    .success-screen {
+      text-align: center;
+      padding: 48px 20px;
+      max-width: 480px;
+      margin: 0 auto;
+      display: none;
+    }
+    .success-icon {
+      font-size: 3.5rem;
+      margin-bottom: 16px;
+    }
+    .success-title {
+      font-family: var(--font-display);
+      font-size: 2.5rem;
+      margin-bottom: 8px;
+    }
+    .success-sub { color: var(--gray-600); margin-bottom: 32px; }
+    .success-card {
+      background: var(--gray-100);
+      border-radius: var(--radius);
+      padding: 20px;
+      text-align: left;
+      margin-bottom: 24px;
+      font-size: 0.875rem;
+      line-height: 2;
+    }
+    .loading-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(255,255,255,0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+      display: none;
+    }
+    .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid var(--gray-200);
+      border-top-color: var(--red);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+  <div class="loading-overlay" id="loadingOverlay">
+    <div class="spinner"></div>
+  </div>
+
+  <!-- Nav -->
+  <nav>
+    <div class="nav-logo">
+      <div class="nav-logo-icon">🔧</div>
+      <div>
+        <div class="nav-logo-text">WILLY'S</div>
+        <span class="nav-logo-sub">Mobile Mechanic</span>
+      </div>
+    </div>
+    <ul class="nav-links">
+      <li><a href="../index.html">Services</a></li>
+      <li><a href="book.html" class="active">Book Appointment</a></li>
+    </ul>
+  </nav>
+
+  <!-- Hero -->
+  <div class="hero-stripe" style="padding-bottom:48px;">
+    <div class="hero-label">Step-by-step booking</div>
+    <h1 class="hero-title" style="font-size:clamp(2rem,5vw,3.5rem);">BOOK YOUR<br><span>APPOINTMENT</span></h1>
+    <p class="hero-sub">Pick a date, choose a time, and fill in your details. We'll confirm within 1 hour.</p>
+  </div>
+
+  <!-- Main Content -->
+  <section>
+    <!-- Success Screen (hidden until booking completes) -->
+    <div class="success-screen" id="successScreen">
+      <div class="success-icon">✅</div>
+      <div class="success-title">YOU'RE BOOKED!</div>
+      <p class="success-sub">Willy will be there. Check your phone — a confirmation text is on the way.</p>
+      <div class="success-card" id="successDetails"></div>
+      <a href="../index.html" class="btn btn-black">← Back to Home</a>
+    </div>
+
+    <!-- Booking Form (shown by default) -->
+    <div id="bookingMain">
+      <!-- Steps -->
+      <div class="steps">
+        <div class="step active" id="step1">
+          <div class="step-num">1</div>
+          <div class="step-label">Pick a Date &amp; Time</div>
+        </div>
+        <div class="step-line"></div>
+        <div class="step" id="step2">
+          <div class="step-num">2</div>
+          <div class="step-label">Your Info</div>
+        </div>
+      </div>
+
+      <!-- Step 1: Calendar + Time -->
+      <div id="stepPanel1">
+        <div class="booking-layout">
+          <!-- Calendar -->
+          <div>
+            <div class="calendar-wrap">
+              <div class="cal-header">
+                <button class="cal-nav" id="prevMonth">‹</button>
+                <h3 id="calMonthLabel">Month Year</h3>
+                <button class="cal-nav" id="nextMonth">›</button>
+              </div>
+              <div class="cal-grid">
+                <div class="cal-days-header">
+                  <span>Su</span><span>Mo</span><span>Tu</span><span>We</span>
+                  <span>Th</span><span>Fr</span><span>Sa</span>
+                </div>
+                <div class="cal-cells" id="calCells"></div>
+              </div>
+            </div>
+            <p style="font-size:0.78rem; color:var(--gray-400); margin-top:10px;">
+              🟢 Green dot = available slots &nbsp; Gray = unavailable
+            </p>
+          </div>
+
+          <!-- Time Slots -->
+          <div>
+            <div class="time-slots-wrap">
+              <div class="time-slots-title" id="timeSlotsTitle">Select a date to see times</div>
+              <div id="timeGrid">
+                <div class="no-date-msg">← Pick a date on the calendar</div>
+              </div>
+            </div>
+
+            <div style="margin-top:20px;">
+              <div id="continueBtn" style="display:none;">
+                <button class="btn btn-primary btn-lg" style="width:100%;" onclick="goToStep2()">
+                  Continue to Your Info →
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2: Customer Info Form -->
+      <div id="stepPanel2" style="display:none; max-width: 600px;">
+        <div class="form-panel">
+          <div class="form-panel-title">YOUR DETAILS</div>
+          <p class="form-panel-sub">Almost done! Tell us about yourself and your vehicle.</p>
+
+          <div class="selected-slot-display" id="selectedSlotDisplay"></div>
+
+          <div id="bookingAlert" class="alert"></div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Full Name *</label>
+              <input type="text" class="form-input" id="custName" placeholder="John Smith" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phone Number *</label>
+              <input type="tel" class="form-input" id="custPhone" placeholder="(678) 780-8930" required />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Email (optional)</label>
+            <input type="email" class="form-input" id="custEmail" placeholder="john@email.com" />
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Year *</label>
+              <input type="text" class="form-input" id="carYear" placeholder="2019" maxlength="4" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Make *</label>
+              <input type="text" class="form-input" id="carMake" placeholder="Toyota" required />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Model *</label>
+            <input type="text" class="form-input" id="carModel" placeholder="Camry" required />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Service Needed *</label>
+            <select class="form-select" id="serviceType" required>
+              <option value="">— Select a service —</option>
+              <option>Oil Change</option>
+              <option>Brake Repair / Brake Change</option>
+              <option>Brake Fluid Flush</option>
+              <option>Caliper Replacement</option>
+              <option>Battery Replacement</option>
+              <option>Starter / Alternator Repair</option>
+              <option>Engine Diagnostics</option>
+              <option>Coolant Flush</option>
+              <option>Tire Rotation / Flat Repair</option>
+              <option>Spark Plugs</option>
+              <option>Engine Filter / Air Filter</option>
+              <option>Fluid Top-Offs</option>
+              <option>Axle Replacement</option>
+              <option>Radiator Replacement</option>
+              <option>Other</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Address / Location *</label>
+            <input type="text" class="form-input" id="custAddress" placeholder="123 Main St, Atlanta, GA" required />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Additional Notes</label>
+            <textarea class="form-textarea" id="custNotes" placeholder="Describe the issue, any sounds, warning lights, etc."></textarea>
+          </div>
+
+          <div style="display:flex; gap:12px; flex-wrap:wrap;">
+            <button class="btn btn-outline" onclick="goToStep1()">← Back</button>
+            <button class="btn btn-primary btn-lg" style="flex:1;" id="submitBtn" onclick="submitBooking()">
+              Confirm Appointment
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div>
+      <div class="footer-logo">WILLY'S MOBILE MECHANIC</div>
+    </div>
+    <div class="footer-contact">📞 (678) 780-8930</div>
+    <div class="footer-copy">© 2025 Willy's Mobile Mechanic</div>
+  </footer>
+
+  <script>
+    // ── Init Supabase ──
+    const { createClient } = supabase;
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // ── State ──
+    let currentDate = new Date();
+    let viewYear = currentDate.getFullYear();
+    let viewMonth = currentDate.getMonth();
+    let selectedDate = null;
+    let selectedTime = null;
+    let availableSlotsData = {}; // { 'YYYY-MM-DD': ['9:00 AM', ...] }
+    let bookedSlotsData = {};    // { 'YYYY-MM-DD': ['9:00 AM', ...] }
+
+    // ── Calendar Init ──
+    async function initCalendar() {
+      await fetchMonthData(viewYear, viewMonth);
+      renderCalendar();
+    }
+
+    async function fetchMonthData(year, month) {
+      const firstDay = `${year}-${String(month+1).padStart(2,'0')}-01`;
+      const lastDay  = `${year}-${String(month+1).padStart(2,'0')}-${new Date(year,month+1,0).getDate()}`;
+
+      // Fetch available slots set by admin
+      const { data: avail } = await sb
+        .from('available_slots')
+        .select('date, time_slot, is_blocked')
+        .gte('date', firstDay)
+        .lte('date', lastDay);
+
+      // Fetch booked appointments
+      const { data: booked } = await sb
+        .from('appointments')
+        .select('date, time_slot')
+        .gte('date', firstDay)
+        .lte('date', lastDay);
+
+      availableSlotsData = {};
+      bookedSlotsData = {};
+
+      if (avail) {
+        avail.forEach(s => {
+          if (!s.is_blocked) {
+            if (!availableSlotsData[s.date]) availableSlotsData[s.date] = [];
+            availableSlotsData[s.date].push(s.time_slot);
+          }
+        });
+      }
+      if (booked) {
+        booked.forEach(a => {
+          if (!bookedSlotsData[a.date]) bookedSlotsData[a.date] = [];
+          bookedSlotsData[a.date].push(a.time_slot);
+        });
+      }
+    }
+
+    function renderCalendar() {
+      const months = ['January','February','March','April','May','June',
+                      'July','August','September','October','November','December'];
+      document.getElementById('calMonthLabel').textContent = `${months[viewMonth]} ${viewYear}`;
+
+      const cells = document.getElementById('calCells');
+      cells.innerHTML = '';
+
+      const firstDow = new Date(viewYear, viewMonth, 1).getDay();
+      const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+      const today = new Date();
+      today.setHours(0,0,0,0);
+
+      // Empty cells before month start
+      for (let i = 0; i < firstDow; i++) {
+        const el = document.createElement('div');
+        el.className = 'cal-cell empty';
+        cells.appendChild(el);
+      }
+
+      for (let d = 1; d <= daysInMonth; d++) {
+        const el = document.createElement('div');
+        el.className = 'cal-cell';
+        el.textContent = d;
+
+        const cellDate = new Date(viewYear, viewMonth, d);
+        const dateStr = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+
+        if (cellDate < today) {
+          el.classList.add('past');
+        } else {
+          const slots = availableSlotsData[dateStr] || [];
+          const booked = bookedSlotsData[dateStr] || [];
+          const openSlots = slots.filter(s => !booked.includes(s));
+
+          if (slots.length === 0) {
+            el.classList.add('unavailable');
+          } else if (openSlots.length === 0) {
+            el.classList.add('unavailable');
+            el.title = 'Fully booked';
+          } else {
+            el.classList.add('available', 'has-slots');
+            el.addEventListener('click', () => selectDate(dateStr, el));
+          }
+        }
+
+        // Today highlight
+        if (cellDate.toDateString() === today.toDateString()) {
+          el.classList.add('today');
+        }
+
+        // Selected
+        if (selectedDate === dateStr) {
+          el.classList.add('selected');
+        }
+
+        cells.appendChild(el);
+      }
+    }
+
+    function selectDate(dateStr, el) {
+      selectedDate = dateStr;
+      selectedTime = null;
+      document.querySelectorAll('.cal-cell.selected').forEach(c => c.classList.remove('selected'));
+      el.classList.add('selected');
+      renderTimeSlots(dateStr);
+      document.getElementById('continueBtn').style.display = 'none';
+    }
+
+    function renderTimeSlots(dateStr) {
+      const slots = availableSlotsData[dateStr] || [];
+      const booked = bookedSlotsData[dateStr] || [];
+
+      const grid = document.getElementById('timeGrid');
+      const title = document.getElementById('timeSlotsTitle');
+
+      const [y, m, d] = dateStr.split('-');
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      title.textContent = `Available times — ${months[parseInt(m)-1]} ${parseInt(d)}`;
+
+      if (slots.length === 0) {
+        grid.innerHTML = '<div class="no-date-msg">No slots available this day.</div>';
+        return;
+      }
+
+      grid.innerHTML = '';
+      const sorted = [...slots].sort((a, b) => {
+        const toMin = t => {
+          const [time, ampm] = t.split(' ');
+          let [h, min] = time.split(':').map(Number);
+          if (ampm === 'PM' && h !== 12) h += 12;
+          if (ampm === 'AM' && h === 12) h = 0;
+          return h * 60 + min;
+        };
+        return toMin(a) - toMin(b);
+      });
+
+      sorted.forEach(slot => {
+        const btn = document.createElement('button');
+        btn.className = 'time-btn';
+        btn.textContent = slot;
+        if (booked.includes(slot)) {
+          btn.classList.add('booked');
+          btn.disabled = true;
+        } else {
+          btn.addEventListener('click', () => selectTime(slot));
+        }
+        grid.appendChild(btn);
+      });
+    }
+
+    function selectTime(slot) {
+      selectedTime = slot;
+      document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('selected'));
+      event.target.classList.add('selected');
+      document.getElementById('continueBtn').style.display = 'block';
+    }
+
+    // ── Step Navigation ──
+    function goToStep2() {
+      if (!selectedDate || !selectedTime) return;
+      document.getElementById('stepPanel1').style.display = 'none';
+      document.getElementById('stepPanel2').style.display = 'block';
+      document.getElementById('step1').classList.remove('active');
+      document.getElementById('step1').classList.add('done');
+      document.getElementById('step2').classList.add('active');
+
+      const [y, m, d] = selectedDate.split('-');
+      const months = ['January','February','March','April','May','June',
+                      'July','August','September','October','November','December'];
+      document.getElementById('selectedSlotDisplay').innerHTML =
+        `📅 <strong>${months[parseInt(m)-1]} ${parseInt(d)}, ${y}</strong> &nbsp;at&nbsp; <strong>${selectedTime}</strong>`;
+    }
+
+    function goToStep1() {
+      document.getElementById('stepPanel2').style.display = 'none';
+      document.getElementById('stepPanel1').style.display = 'block';
+      document.getElementById('step2').classList.remove('active');
+      document.getElementById('step1').classList.remove('done');
+      document.getElementById('step1').classList.add('active');
+    }
+
+    // ── Submit Booking ──
+    async function submitBooking() {
+      const name    = document.getElementById('custName').value.trim();
+      const phone   = document.getElementById('custPhone').value.trim();
+      const email   = document.getElementById('custEmail').value.trim();
+      const year    = document.getElementById('carYear').value.trim();
+      const make    = document.getElementById('carMake').value.trim();
+      const model   = document.getElementById('carModel').value.trim();
+      const service = document.getElementById('serviceType').value;
+      const address = document.getElementById('custAddress').value.trim();
+      const notes   = document.getElementById('custNotes').value.trim();
+
+      const alertEl = document.getElementById('bookingAlert');
+      alertEl.className = 'alert';
+
+      if (!name || !phone || !make || !model || !service || !address) {
+        alertEl.className = 'alert alert-error show';
+        alertEl.textContent = 'Please fill in all required fields.';
+        return;
+      }
+
+      document.getElementById('loadingOverlay').style.display = 'flex';
+      document.getElementById('submitBtn').disabled = true;
+
+      const { error } = await sb.from('appointments').insert({
+        date: selectedDate,
+        time_slot: selectedTime,
+        customer_name: name,
+        phone,
+        email: email || null,
+        car_year: year || null,
+        car_make: make,
+        car_model: model,
+        service,
+        notes: `${address}${notes ? '\n' + notes : ''}`,
+        status: 'confirmed'
+      });
+
+      document.getElementById('loadingOverlay').style.display = 'none';
+      document.getElementById('submitBtn').disabled = false;
+
+      if (error) {
+        alertEl.className = 'alert alert-error show';
+        alertEl.textContent = 'Something went wrong. Please call us to book: (678) 780-8930';
+        return;
+      }
+
+      // Show success
+      document.getElementById('bookingMain').style.display = 'none';
+      document.getElementById('successScreen').style.display = 'block';
+
+      const [y, m, d] = selectedDate.split('-');
+      const months = ['January','February','March','April','May','June',
+                      'July','August','September','October','November','December'];
+      document.getElementById('successDetails').innerHTML = `
+        <strong>📅 Date:</strong> ${months[parseInt(m)-1]} ${parseInt(d)}, ${y}<br>
+        <strong>🕐 Time:</strong> ${selectedTime}<br>
+        <strong>👤 Name:</strong> ${name}<br>
+        <strong>🚗 Vehicle:</strong> ${year} ${make} ${model}<br>
+        <strong>🔧 Service:</strong> ${service}<br>
+        <strong>📍 Location:</strong> ${address}
+      `;
+    }
+
+    // ── Month Navigation ──
+    document.getElementById('prevMonth').addEventListener('click', async () => {
+      viewMonth--;
+      if (viewMonth < 0) { viewMonth = 11; viewYear--; }
+      await fetchMonthData(viewYear, viewMonth);
+      renderCalendar();
+    });
+    document.getElementById('nextMonth').addEventListener('click', async () => {
+      viewMonth++;
+      if (viewMonth > 11) { viewMonth = 0; viewYear++; }
+      await fetchMonthData(viewYear, viewMonth);
+      renderCalendar();
+    });
+
+    // ── Boot ──
+    initCalendar();
+  </script>
+</body>
+</html>
