@@ -493,18 +493,22 @@
       const lastDay  = `${year}-${String(month+1).padStart(2,'0')}-${new Date(year,month+1,0).getDate()}`;
 
       // Fetch available slots set by admin
-      const { data: avail } = await sb
+      const { data: avail, error: availError } = await sb
         .from('available_slots')
         .select('date, time_slot, is_blocked')
         .gte('date', firstDay)
         .lte('date', lastDay);
 
+      if (availError) console.error('Error loading available_slots:', availError);
+
       // Fetch booked appointments
-      const { data: booked } = await sb
+      const { data: booked, error: bookedError } = await sb
         .from('appointments')
         .select('date, time_slot')
         .gte('date', firstDay)
         .lte('date', lastDay);
+
+      if (bookedError) console.error('Error loading appointments:', bookedError);
 
       availableSlotsData = {};
       bookedSlotsData = {};
@@ -630,16 +634,16 @@
           btn.classList.add('booked');
           btn.disabled = true;
         } else {
-          btn.addEventListener('click', () => selectTime(slot));
+          btn.addEventListener('click', (e) => selectTime(slot, e));
         }
         grid.appendChild(btn);
       });
     }
 
-    function selectTime(slot) {
+    function selectTime(slot, e) {
       selectedTime = slot;
       document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('selected'));
-      event.target.classList.add('selected');
+      e.currentTarget.classList.add('selected');
       document.getElementById('continueBtn').style.display = 'block';
     }
 
@@ -709,8 +713,9 @@
       document.getElementById('submitBtn').disabled = false;
 
       if (error) {
+        console.error('Booking insert failed:', error);
         alertEl.className = 'alert alert-error show';
-        alertEl.textContent = 'Something went wrong. Please call us to book: (678) 780-8930';
+        alertEl.textContent = `Booking failed: ${error.message}`;
         return;
       }
 

@@ -480,15 +480,19 @@
       const firstDay = `${year}-${String(month+1).padStart(2,'0')}-01`;
       const lastDay  = `${year}-${String(month+1).padStart(2,'0')}-${new Date(year,month+1,0).getDate()}`;
 
-      const { data: avail } = await sb
+      const { data: avail, error: availError } = await sb
         .from('available_slots')
         .select('date, time_slot, is_blocked')
         .gte('date', firstDay).lte('date', lastDay);
 
-      const { data: booked } = await sb
+      if (availError) console.error('Error loading available_slots:', availError);
+
+      const { data: booked, error: bookedError } = await sb
         .from('appointments')
         .select('date, time_slot')
         .gte('date', firstDay).lte('date', lastDay);
+
+      if (bookedError) console.error('Error loading appointments:', bookedError);
 
       adminAvailableSlots = {};
       adminBookedSlots = {};
@@ -600,14 +604,31 @@
       const booked = adminBookedSlots[adminSelectedDate] || [];
 
       // Delete all non-booked slots for this date, then re-insert enabled ones
-      await sb.from('available_slots')
+      const { error: deleteError } = await sb.from('available_slots')
         .delete()
         .eq('date', adminSelectedDate)
         .not('time_slot', 'in', `(${booked.map(t => `"${t}"`).join(',') || '"__none__"'})`);
 
+      if (deleteError) {
+        console.error('Slot delete failed:', deleteError);
+        document.getElementById('loadingOverlay').style.display = 'none';
+        const alertEl = document.getElementById('slotSaveAlert');
+        alertEl.className = 'alert alert-error show';
+        alertEl.textContent = `Save failed: ${deleteError.message}`;
+        return;
+      }
+
       if (enabled.length > 0) {
         const rows = enabled.map(t => ({ date: adminSelectedDate, time_slot: t, is_blocked: false }));
-        await sb.from('available_slots').upsert(rows, { onConflict: 'date,time_slot' });
+        const { error: upsertError } = await sb.from('available_slots').upsert(rows, { onConflict: 'date,time_slot' });
+        if (upsertError) {
+          console.error('Slot upsert failed:', upsertError);
+          document.getElementById('loadingOverlay').style.display = 'none';
+          const alertEl = document.getElementById('slotSaveAlert');
+          alertEl.className = 'alert alert-error show';
+          alertEl.textContent = `Save failed: ${upsertError.message}`;
+          return;
+        }
       }
 
       document.getElementById('loadingOverlay').style.display = 'none';
@@ -625,12 +646,13 @@
     // ── APPOINTMENTS ──
     async function loadAppointments() {
       const today = new Date().toISOString().split('T')[0];
-      const { data } = await sb
+      const { data, error } = await sb
         .from('appointments')
         .select('*')
         .order('date', { ascending: true })
         .order('time_slot', { ascending: true });
 
+      if (error) console.error('Error loading appointment list:', error);
       allAppointments = data || [];
       updateStats();
       renderAppointments(currentFilter);
