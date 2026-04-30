@@ -156,6 +156,7 @@
     .cal-cell.past { color: var(--gray-200); cursor: not-allowed; }
     .cal-cell.available:hover { background: var(--gray-100); border-color: var(--gray-400); }
     .cal-cell.selected { background: var(--black) !important; color: var(--white) !important; border-color: var(--black) !important; }
+    .multi-date-help { font-size: 0.76rem; color: var(--gray-400); margin-top: 8px; line-height: 1.4; }
     .cal-cell.today { border-color: var(--red); }
     .cal-cell.has-slots::after {
       content: ''; position: absolute; bottom: 3px;
@@ -359,7 +360,7 @@
         <div class="admin-panel">
           <div class="admin-panel-header">
             <span class="admin-panel-title">AVAILABILITY CALENDAR</span>
-            <span style="font-size:0.75rem; color:var(--gray-400);">Click a date to set times</span>
+            <span style="font-size:0.75rem; color:var(--gray-400);">Click dates to set times</span>
           </div>
           <div class="admin-panel-body">
             <div class="calendar-wrap">
@@ -428,7 +429,7 @@
     ];
 
     let adminViewYear, adminViewMonth;
-    let adminSelectedDate = null;
+    let adminSelectedDates = [];
     let adminAvailableSlots = {};  // { 'YYYY-MM-DD': ['9:00 AM', ...] }
     let adminBookedSlots = {};     // { 'YYYY-MM-DD': ['9:00 AM', ...] }
     let allAppointments = [];
@@ -546,28 +547,49 @@
           const booked = adminBookedSlots[dateStr] || [];
           if (slots.length > 0) el.classList.add('has-slots');
           if (slots.length > 0 && booked.length === slots.length) el.classList.add('fully-booked');
-          el.addEventListener('click', () => openSlotManager(dateStr, el));
+          el.addEventListener('click', () => toggleDateSelection(dateStr));
         }
 
         if (cellDate.toDateString() === today.toDateString()) el.classList.add('today');
-        if (adminSelectedDate === dateStr) el.classList.add('selected');
+        if (adminSelectedDates.includes(dateStr)) el.classList.add('selected');
         cells.appendChild(el);
       }
     }
 
-    function openSlotManager(dateStr, el) {
-      adminSelectedDate = dateStr;
-      document.querySelectorAll('#adminCalCells .cal-cell.selected').forEach(c => c.classList.remove('selected'));
-      el.classList.add('selected');
+    function toggleDateSelection(dateStr) {
+      if (adminSelectedDates.includes(dateStr)) {
+        adminSelectedDates = adminSelectedDates.filter(d => d !== dateStr);
+      } else {
+        adminSelectedDates.push(dateStr);
+        adminSelectedDates.sort();
+      }
 
-      const [y, m, d] = dateStr.split('-');
+      renderAdminCalendar();
+
+      if (adminSelectedDates.length === 0) {
+        document.getElementById('slotManager').style.display = 'none';
+        return;
+      }
+      openSlotManager();
+    }
+
+    function openSlotManager() {
+      const selectedCount = adminSelectedDates.length;
+      const firstDate = adminSelectedDates[0];
+      const [y, m, d] = firstDate.split('-');
       const months = ['January','February','March','April','May','June',
                       'July','August','September','October','November','December'];
-      document.getElementById('slotManagerTitle').textContent =
-        `Time slots — ${months[parseInt(m)-1]} ${parseInt(d)}, ${y}`;
 
-      const enabled = adminAvailableSlots[dateStr] || [];
-      const booked  = adminBookedSlots[dateStr] || [];
+      document.getElementById('slotManagerTitle').textContent = selectedCount > 1
+        ? `Time slots — ${selectedCount} selected dates`
+        : `Time slots — ${months[parseInt(m)-1]} ${parseInt(d)}, ${y}`;
+
+      const enabledEverywhere = ALL_TIMES.filter(t =>
+        adminSelectedDates.every(dateStr => (adminAvailableSlots[dateStr] || []).includes(t))
+      );
+      const bookedAnywhere = ALL_TIMES.filter(t =>
+        adminSelectedDates.some(dateStr => (adminBookedSlots[dateStr] || []).includes(t))
+      );
 
       const grid = document.getElementById('adminSlotGrid');
       grid.innerHTML = '';
@@ -577,10 +599,10 @@
         btn.textContent = t;
         btn.dataset.time = t;
 
-        if (booked.includes(t)) {
+        if (bookedAnywhere.includes(t)) {
           btn.classList.add('booked');
-          btn.title = 'Already booked — cannot remove';
-        } else if (enabled.includes(t)) {
+          btn.title = 'Already booked on at least one selected date — cannot remove in bulk';
+        } else if (enabledEverywhere.includes(t)) {
           btn.classList.add('enabled');
         }
 
@@ -592,54 +614,69 @@
       });
 
       document.getElementById('slotManager').style.display = 'block';
+
+      let help = document.getElementById('multiDateHelp');
+      if (!help) {
+        help = document.createElement('div');
+        help.id = 'multiDateHelp';
+        help.className = 'multi-date-help';
+        document.getElementById('slotManagerTitle').after(help);
+      }
+      help.textContent = selectedCount > 1
+        ? 'Bulk edit: selected time slots will be saved to every selected date. Booked times are protected.'
+        : 'Click more dates on the calendar to bulk edit availability together.';
+
       document.getElementById('slotSaveAlert').className = 'alert';
     }
 
     async function saveSlots() {
-      if (!adminSelectedDate) return;
+      if (adminSelectedDates.length === 0) return;
       document.getElementById('loadingOverlay').style.display = 'flex';
 
       const enabled = [...document.querySelectorAll('#adminSlotGrid .slot-toggle.enabled')]
         .map(b => b.dataset.time);
-      const booked = adminBookedSlots[adminSelectedDate] || [];
 
-      // Delete all non-booked slots for this date, then re-insert enabled ones
-      const { error: deleteError } = await sb.from('available_slots')
-        .delete()
-        .eq('date', adminSelectedDate)
-        .not('time_slot', 'in', `(${booked.map(t => `"${t}"`).join(',') || '"__none__"'})`);
+      for (const dateStr of adminSelectedDates) {
+        const booked = adminBookedSlots[dateStr] || [];
 
-      if (deleteError) {
-        console.error('Slot delete failed:', deleteError);
-        document.getElementById('loadingOverlay').style.display = 'none';
-        const alertEl = document.getElementById('slotSaveAlert');
-        alertEl.className = 'alert alert-error show';
-        alertEl.textContent = `Save failed: ${deleteError.message}`;
-        return;
-      }
+        // Delete all non-booked slots for this date, then re-insert enabled ones.
+        const { error: deleteError } = await sb.from('available_slots')
+          .delete()
+          .eq('date', dateStr)
+          .not('time_slot', 'in', `(${booked.map(t => `"${t}"`).join(',') || '"__none__"'})`);
 
-      if (enabled.length > 0) {
-        const rows = enabled.map(t => ({ date: adminSelectedDate, time_slot: t, is_blocked: false }));
-        const { error: upsertError } = await sb.from('available_slots').upsert(rows, { onConflict: 'date,time_slot' });
-        if (upsertError) {
-          console.error('Slot upsert failed:', upsertError);
+        if (deleteError) {
+          console.error('Slot delete failed:', deleteError);
           document.getElementById('loadingOverlay').style.display = 'none';
           const alertEl = document.getElementById('slotSaveAlert');
           alertEl.className = 'alert alert-error show';
-          alertEl.textContent = `Save failed: ${upsertError.message}`;
+          alertEl.textContent = `Save failed for ${dateStr}: ${deleteError.message}`;
           return;
+        }
+
+        if (enabled.length > 0) {
+          const rows = enabled.map(t => ({ date: dateStr, time_slot: t, is_blocked: false }));
+          const { error: upsertError } = await sb.from('available_slots').upsert(rows, { onConflict: 'date,time_slot' });
+          if (upsertError) {
+            console.error('Slot upsert failed:', upsertError);
+            document.getElementById('loadingOverlay').style.display = 'none';
+            const alertEl = document.getElementById('slotSaveAlert');
+            alertEl.className = 'alert alert-error show';
+            alertEl.textContent = `Save failed for ${dateStr}: ${upsertError.message}`;
+            return;
+          }
         }
       }
 
       document.getElementById('loadingOverlay').style.display = 'none';
 
-      // Refresh
       await fetchAdminMonthData(adminViewYear, adminViewMonth);
       renderAdminCalendar();
+      openSlotManager();
 
       const alertEl = document.getElementById('slotSaveAlert');
       alertEl.className = 'alert alert-success show';
-      alertEl.textContent = `✅ Saved ${enabled.length} time slot${enabled.length !== 1 ? 's' : ''} for this date.`;
+      alertEl.textContent = `✅ Saved ${enabled.length} time slot${enabled.length !== 1 ? 's' : ''} for ${adminSelectedDates.length} date${adminSelectedDates.length !== 1 ? 's' : ''}.`;
       setTimeout(() => alertEl.className = 'alert', 3000);
     }
 
@@ -739,7 +776,7 @@
     document.getElementById('adminPrevMonth').addEventListener('click', async () => {
       adminViewMonth--;
       if (adminViewMonth < 0) { adminViewMonth = 11; adminViewYear--; }
-      adminSelectedDate = null;
+      adminSelectedDates = [];
       document.getElementById('slotManager').style.display = 'none';
       await fetchAdminMonthData(adminViewYear, adminViewMonth);
       renderAdminCalendar();
@@ -747,7 +784,7 @@
     document.getElementById('adminNextMonth').addEventListener('click', async () => {
       adminViewMonth++;
       if (adminViewMonth > 11) { adminViewMonth = 0; adminViewYear++; }
-      adminSelectedDate = null;
+      adminSelectedDates = [];
       document.getElementById('slotManager').style.display = 'none';
       await fetchAdminMonthData(adminViewYear, adminViewMonth);
       renderAdminCalendar();
